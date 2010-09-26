@@ -1,0 +1,2 @@
+#!/bin/sh
+./galcon 2> stderr
