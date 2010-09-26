@@ -6,8 +6,10 @@
 #ifndef PLANET_WARS_H_
 #define PLANET_WARS_H_
 
+#define uint unsigned int
 #include <string>
 #include <vector>
+#include <algorithm>
 
 // This is a utility class that parses strings.
 class StringUtil {
@@ -67,11 +69,15 @@ class Fleet {
   int total_trip_length_;
   int turns_remaining_;
 };
+class PlanetWars;
 
 // Stores information about one planet. There is one instance of this class
 // for each planet on the map.
 class Planet {
  public:
+    PlanetWars *pw;
+    bool party;
+
   // Initializes a planet.
   Planet(int planet_id,
          int owner,
@@ -118,6 +124,8 @@ class Planet {
   double x_, y_;
 };
 
+bool attacking_fleet_sort (Fleet i, Fleet j);
+
 class PlanetWars {
  public:
   // Initializes the game state given a string containing game state data.
@@ -131,6 +139,114 @@ class PlanetWars {
   // planets. They are numbered starting at 0.
   const Planet& GetPlanet(int planet_id) const;
 
+    int UnderAttack(int planet_id) const
+    {
+        int total = 0;
+        const std::vector<Fleet> enemy_fleets = EnemyFleets();
+        for (uint i = 0; i < enemy_fleets.size(); ++i) {
+            if (enemy_fleets[i].DestinationPlanet() == planet_id) {
+                total += enemy_fleets[i].NumShips();
+            }
+        }
+        return total;
+    }
+
+    int UnderAttackDistance(int planet_id) const
+    {
+        int distance = 0;
+        const std::vector<Fleet> enemy_fleets = EnemyFleets();
+        for (uint i = 0; i < enemy_fleets.size(); ++i) {
+            if (enemy_fleets[i].DestinationPlanet() == planet_id) {
+                distance = std::min(distance, enemy_fleets[i].TurnsRemaining());
+            }
+        }
+        return distance;
+    }
+
+    int NearestEmpty(int planet_id) const
+    {
+        int nearest = -1;
+        int nearestID = -1;
+        const std::vector<Planet> planets = NeutralPlanets();
+        for (uint i = 0; i < planets.size(); ++i) {
+            int d = Distance(planet_id, planets[i].PlanetID());
+            if (nearest == -1 || nearest > d) {
+                nearestID = planets[i].PlanetID();
+                nearest = d;
+            }
+        }
+        return nearestID;
+    }
+
+    bool party(int planet_id) const
+    {
+        const std::vector<Fleet> my_fleets = MyFleets();
+        for (uint j = 0; j < my_fleets.size(); ++j)
+            if (my_fleets[j].DestinationPlanet() == planet_id)
+                return true;
+        return false;
+    }
+
+    int real_attack_count(int planet_id) const
+    {
+        const Planet p = GetPlanet(planet_id);
+        int c = p.NumShips();
+
+        const std::vector<Fleet> fleets = MyFleets();
+        for (uint i = 0; i < fleets.size(); ++i) {
+            if (fleets[i].DestinationPlanet() == planet_id)
+                c -= my_fleets[i].NumShips();
+        }
+        return c;
+    }
+
+    int real_ship_count(int planet_id) const
+    {
+        const Planet p = GetPlanet(planet_id);
+        const std::vector<Fleet> enemy_fleets = EnemyFleets(planet_id);
+        if (enemy_fleets.size() == 0)
+            return p.NumShips();
+        int i = enemy_fleets.size() - 1;
+        int time_left = enemy_fleets[i].TurnsRemaining();
+        int willHave = p.NumShips() + time_left * p.GrowthRate();
+        int fighters = 0;
+        for (uint i = 0; i < enemy_fleets.size(); ++i) {
+            fighters += enemy_fleets[i].NumShips() + 1;
+        }
+        int real_count = willHave - fighters;
+        int my_real_count = p.NumShips();
+
+        const std::vector<Fleet> my_fleets = MyFleets();
+        for (uint i = 0; i < my_fleets.size(); ++i) {
+            if (my_fleets[i].DestinationPlanet() != planet_id)
+                continue;
+            if (my_fleets[i].TurnsRemaining() < time_left)
+                real_count += my_fleets[i].NumShips();
+        }
+        if (real_count > p.NumShips())
+            return my_real_count;
+        return real_count;
+    }
+
+    int time_left(int planet_id) const
+    {
+        const Planet p = GetPlanet(planet_id);
+        const std::vector<Fleet> enemy_fleets = EnemyFleets(planet_id);
+        if (enemy_fleets.size() == 0)
+            return  p.NumShips();
+        int i = enemy_fleets.size() - 1;
+        return enemy_fleets[i].TurnsRemaining();
+    }
+
+    int GrowthRate(int player_id) const {
+        int total = 0;
+        const std::vector<Planet> planets = Planets();
+        for (uint i = 0; i < planets.size(); ++i)
+            if (planets[i].Owner() == player_id)
+                total += planets[i].GrowthRate();
+        return total;
+    }
+
   // Returns the number of fleets.
   int NumFleets() const;
 
@@ -141,6 +257,9 @@ class PlanetWars {
 
   // Returns a list of all the planets.
   std::vector<Planet> Planets() const;
+
+  // Returns a list of all the planets.
+  std::vector<Planet> Planets(int player_id) const;
 
   // Return a list of all the planets owned by the current player. By
   // convention, the current player is always player number 1.
@@ -161,10 +280,28 @@ class PlanetWars {
   std::vector<Fleet> Fleets() const;
 
   // Return a list of all the fleets owned by the current player.
-  std::vector<Fleet> MyFleets() const;
+    std::vector<Fleet> MyFleets() const { return my_fleets; }
+    std::vector<Fleet> get_MyFleets() const;
 
   // Return a list of all the fleets owned by enemy players.
-  std::vector<Fleet> EnemyFleets() const;
+  std::vector<Fleet> EnemyFleets() const { return enemy_fleets; };
+  std::vector<Fleet> get_EnemyFleets() const;
+
+    // Return a list of all the fleets owned by enemy players.
+    std::vector<Fleet> EnemyFleets(int planet_id) const {
+        std::vector<Fleet> my;
+        std::vector<Fleet> all = EnemyFleets();
+        for (uint i = 0; i < all.size(); ++i)
+            if (all[i].DestinationPlanet() == planet_id)
+                my.push_back(all[i]);
+        sort(my.begin(), my.end(), attacking_fleet_sort);
+        return my;
+    }
+
+  void removeShips(int planet_id, int count) const {
+    planets_[planet_id].RemoveShips(count);
+  }
+
 
   // Writes a string which represents the current game state. This string
   // conforms to the Point-in-Time format from the project Wiki.
@@ -203,8 +340,10 @@ class PlanetWars {
 
   // Store all the planets and fleets. OMG we wouldn't wanna lose all the
   // planets and fleets, would we!?
-  std::vector<Planet> planets_;
+  mutable std::vector<Planet> planets_;
   std::vector<Fleet> fleets_;
+  std::vector<Fleet> my_fleets;
+  std::vector<Fleet> enemy_fleets;
 };
 
 #endif
